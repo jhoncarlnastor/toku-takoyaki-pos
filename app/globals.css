@@ -98,6 +98,34 @@
   --muted: #1e2029;
   --muted-foreground: #a1a1aa; /* zinc-400 */
   --accent: #1e2029;
+
+/* ============================ THERMAL RECEIPT PRINT STYLES ============================ */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  
+  #thermal-receipt-container,
+  #thermal-receipt-container * {
+    visibility: visible !important;
+  }
+  
+  #thermal-receipt-container {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 4mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    z-index: 999999 !important;
+  }
+}
+
   --accent-foreground: #ffffff;
   --destructive: #ef4444;
   --border: rgba(255, 255, 255, 0.05); /* white/5 */

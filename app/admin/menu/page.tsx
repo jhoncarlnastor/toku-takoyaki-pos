@@ -13,7 +13,6 @@ type Product = {
   name: string
   category: string
   price: number
-  stock: number
   image_url: string | null
 }
 
@@ -21,6 +20,7 @@ type AddOn = {
   id: string
   name: string
   price: number
+  applicable_categories?: string[]
 }
 
 type ModalType = 'products' | 'add_ons'
@@ -29,24 +29,25 @@ type ProductForm = {
   name: string
   category: 'Takoyaki' | 'Drinks'
   price: string
-  stock: string
+  
 }
 
 type AddOnForm = {
   name: string
   price: string
+  applicable_categories: string[]
 }
 
 const EMPTY_PRODUCT_FORM: ProductForm = {
   name: '',
   category: 'Takoyaki',
   price: '',
-  stock: '',
 }
 
 const EMPTY_ADDON_FORM: AddOnForm = {
   name: '',
   price: '',
+  applicable_categories: ['Takoyaki', 'Drinks'],
 }
 
 const inputClass =
@@ -139,7 +140,6 @@ export default function MenuPage() {
       name: product.name,
       category: product.category === 'Drinks' ? 'Drinks' : 'Takoyaki',
       price: String(product.price),
-      stock: String(product.stock),
     })
     setImageFile(null)
     setImagePreview(product.image_url ?? null)
@@ -153,6 +153,7 @@ export default function MenuPage() {
     setAddOnForm({
       name: addOn.name,
       price: String(addOn.price),
+      applicable_categories: addOn.applicable_categories ?? [],
     })
     clearImageSelection()
     setError(null)
@@ -182,11 +183,10 @@ export default function MenuPage() {
       name: productForm.name.trim(),
       category: productForm.category,
       price: Number(productForm.price),
-      stock: Number(productForm.stock),
       image_url: editingProduct?.image_url ?? null,
     }
 
-    if (!payload.name || Number.isNaN(payload.price) || Number.isNaN(payload.stock)) {
+    if (!payload.name || Number.isNaN(payload.price)) {
       setError('Please fill in all fields with valid values.')
       setSubmitting(false)
       return
@@ -238,6 +238,7 @@ export default function MenuPage() {
     const payload = {
       name: addOnForm.name.trim(),
       price: Number(addOnForm.price),
+      applicable_categories: addOnForm.applicable_categories,
     }
 
     if (!payload.name || Number.isNaN(payload.price)) {
@@ -339,7 +340,6 @@ export default function MenuPage() {
                     <th className="px-4 py-3 font-medium">Product</th>
                     <th className="px-4 py-3 font-medium">Category</th>
                     <th className="px-4 py-3 font-medium">Price</th>
-                    <th className="px-4 py-3 font-medium">Stock</th>
                     <th className="px-4 py-3 text-right font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -369,7 +369,6 @@ export default function MenuPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 tabular-nums">{formatPeso(product.price)}</td>
-                      <td className="px-4 py-3 tabular-nums">{product.stock}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
                           <Button
@@ -412,6 +411,7 @@ export default function MenuPage() {
                   <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
                     <th className="px-4 py-3 font-medium">Name</th>
                     <th className="px-4 py-3 font-medium">Price</th>
+                    <th className="px-4 py-3 font-medium">Applicable Categories</th>
                     <th className="px-4 py-3 text-right font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -420,6 +420,18 @@ export default function MenuPage() {
                     <tr key={addOn.id} className="hover:bg-muted/40">
                       <td className="px-4 py-3 font-medium">{addOn.name}</td>
                       <td className="px-4 py-3 tabular-nums">{formatPeso(addOn.price)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {(addOn.applicable_categories ?? []).map((cat) => (
+                            <span
+                              key={cat}
+                              className="inline-flex items-center rounded-full border bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground"
+                            >
+                              {cat}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
                           <Button
@@ -520,20 +532,6 @@ export default function MenuPage() {
                   />
                 </label>
 
-                <label className="flex flex-col gap-1.5 text-sm font-medium">
-                  Stock
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={productForm.stock}
-                    onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })}
-                    placeholder="0"
-                    required
-                    className={inputClass}
-                  />
-                </label>
-
                 <div className="flex flex-col gap-1.5 text-sm font-medium">
                   <span>Image</span>
                   <input
@@ -595,6 +593,31 @@ export default function MenuPage() {
                     className={inputClass}
                   />
                 </label>
+
+                <div className="flex flex-col gap-2 text-sm font-medium">
+                  <span>Applicable Categories</span>
+                  <div className="flex gap-4">
+                    {['Takoyaki', 'Drinks'].map((cat) => {
+                      const checked = addOnForm.applicable_categories.includes(cat)
+                      return (
+                        <label key={cat} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const next = e.target.checked
+                                ? [...addOnForm.applicable_categories, cat]
+                                : addOnForm.applicable_categories.filter((c) => c !== cat)
+                              setAddOnForm({ ...addOnForm, applicable_categories: next })
+                            }}
+                            className="size-4 rounded border-input accent-primary"
+                          />
+                          <span className="font-normal">{cat}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
 
                 {error && <p className="text-sm text-destructive">{error}</p>}
 

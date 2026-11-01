@@ -19,9 +19,17 @@ type Product = {
   name: string
 }
 
+type AddOn = {
+  id: string
+  name: string
+  price: number
+  applicable_categories?: string[]
+}
+
 type ProductRecipe = {
   id: string
-  product_id: string
+  product_id: string | null
+  add_on_id: string | null
   inventory_item_id: string
   quantity_required: number
 }
@@ -41,7 +49,9 @@ type RawForm = {
 }
 
 type LinkForm = {
+  item_type: 'product' | 'add_on'
   product_id: string
+  add_on_id: string
   inventory_item_id: string
   quantity_required: string
 }
@@ -56,7 +66,9 @@ const EMPTY_RAW_FORM: RawForm = {
 }
 
 const EMPTY_LINK_FORM: LinkForm = {
+  item_type: 'product',
   product_id: '',
+  add_on_id: '',
   inventory_item_id: '',
   quantity_required: '',
 }
@@ -77,6 +89,7 @@ const inputClass =
 export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  const [addOns, setAddOns] = useState<AddOn[]>([])
   const [recipes, setRecipes] = useState<ProductRecipe[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -110,6 +123,16 @@ export default function InventoryPage() {
     }
   }, [])
 
+  const fetchAddOns = useCallback(async () => {
+    const { data, error } = await supabase.from('add_ons').select('id, name, price, applicable_categories')
+    if (error) {
+      console.error('Error fetching add-ons:', error)
+      setAddOns([])
+    } else {
+      setAddOns((data as AddOn[]) ?? [])
+    }
+  }, [])
+
   const fetchRecipes = useCallback(async () => {
     const { data, error } = await supabase.from('product_recipes').select('*')
     if (error) {
@@ -123,7 +146,7 @@ export default function InventoryPage() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      await Promise.all([fetchInventory(), fetchProducts(), fetchRecipes()])
+      await Promise.all([fetchInventory(), fetchProducts(), fetchAddOns(), fetchRecipes()])
       setLoading(false)
     }
     load()
@@ -157,9 +180,8 @@ export default function InventoryPage() {
 
   function openLinkModal(inventoryItemId?: string) {
     setLinkForm({
-      product_id: '',
+      ...EMPTY_LINK_FORM,
       inventory_item_id: inventoryItemId ?? '',
-      quantity_required: '',
     })
     setError(null)
     setModalType('link')
@@ -248,13 +270,18 @@ export default function InventoryPage() {
     setError(null)
 
     const payload = {
-      product_id: linkForm.product_id,
+      product_id: linkForm.item_type === 'product' ? linkForm.product_id : null,
+      add_on_id: linkForm.item_type === 'add_on' ? linkForm.add_on_id : null,
       inventory_item_id: linkForm.inventory_item_id,
       quantity_required: Number(linkForm.quantity_required),
     }
 
-    if (!payload.product_id || !payload.inventory_item_id || Number.isNaN(payload.quantity_required)) {
-      setError('Please select a product, an ingredient, and enter a quantity.')
+    const hasValidItem = linkForm.item_type === 'product'
+      ? !!payload.product_id
+      : !!payload.add_on_id
+
+    if (!hasValidItem || !payload.inventory_item_id || Number.isNaN(payload.quantity_required)) {
+      setError('Please select a product or add-on, an ingredient, and enter a quantity.')
       setSubmitting(false)
       return
     }
@@ -281,7 +308,15 @@ export default function InventoryPage() {
     }
   }
 
-  const productName = (id: string) => products.find((p) => p.id === id)?.name ?? 'Unknown product'
+  const formatPeso = (amount: number) => `₱${amount.toFixed(2)}`
+
+  const productName = (id: string | null) => products.find((p) => p.id === id)?.name ?? 'Unknown product'
+  const addOnName = (id: string | null) => addOns.find((a) => a.id === id)?.name ?? 'Unknown add-on'
+  const itemName = (recipe: ProductRecipe) => {
+    if (recipe.product_id) return productName(recipe.product_id)
+    if (recipe.add_on_id) return addOnName(recipe.add_on_id)
+    return 'Unknown item'
+  }
   const ingredientById = (id: string) => items.find((i) => i.id === id)
 
   return (
@@ -396,7 +431,7 @@ export default function InventoryPage() {
                                   className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 py-2 text-sm"
                                 >
                                   <span className="min-w-0 flex-1 truncate">
-                                    <span className="font-medium">{productName(recipe.product_id)}</span>
+                                    <span className="font-medium">{itemName(recipe)}</span>
                                     <span className="text-muted-foreground">
                                       {' '}&mdash; {recipe.quantity_required} {item.unit}
                                     </span>
@@ -404,7 +439,7 @@ export default function InventoryPage() {
                                   <Button
                                     variant="ghost"
                                     size="icon-xs"
-                                    aria-label={`Unlink ${productName(recipe.product_id)}`}
+                                    aria-label={`Unlink ${itemName(recipe)}`}
                                     onClick={() => deleteRecipe(recipe.id)}
                                   >
                                     <Trash2 />
@@ -499,19 +534,44 @@ export default function InventoryPage() {
         <ModalShell title="Link Recipe" onClose={closeModal}>
           <form onSubmit={handleLinkSubmit} className="flex flex-col gap-4">
             <label className="flex flex-col gap-1.5 text-sm font-medium">
-              Product
+              Item Type
               <select
-                value={linkForm.product_id}
-                onChange={(e) => setLinkForm({ ...linkForm, product_id: e.target.value })}
+                value={linkForm.item_type}
+                onChange={(e) => setLinkForm({ ...linkForm, item_type: e.target.value as 'product' | 'add_on', product_id: '', add_on_id: '' })}
                 required
                 className={inputClass}
               >
-                <option value="">Select a product…</option>
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.name}
-                  </option>
-                ))}
+                <option value="product">Product</option>
+                <option value="add_on">Add-on</option>
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              Product / Add-on
+              <select
+                value={linkForm.item_type === 'product' ? linkForm.product_id : linkForm.add_on_id}
+                onChange={(e) => setLinkForm({
+                  ...linkForm,
+                  [linkForm.item_type === 'product' ? 'product_id' : 'add_on_id']: e.target.value
+                })}
+                required
+                className={inputClass}
+              >
+                <option value="">Select a product or add-on…</option>
+                <optgroup label="Main Products">
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.name}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Add-ons">
+                  {addOns.map((addOn) => (
+                    <option key={addOn.id} value={addOn.id}>
+                      {addOn.name} (+{formatPeso(addOn.price)})
+                    </option>
+                  ))}
+                </optgroup>
               </select>
             </label>
 
@@ -570,7 +630,7 @@ export default function InventoryPage() {
                         className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2 text-sm"
                       >
                         <span className="min-w-0 flex-1 truncate">
-                          <span className="font-medium">{productName(recipe.product_id)}</span>
+                          <span className="font-medium">{itemName(recipe)}</span>
                           <span className="text-muted-foreground">
                             {' '}&mdash; {recipe.quantity_required} {ingredient?.unit ?? 'units'} of{' '}
                             {ingredient?.name ?? 'Unknown'}
@@ -579,7 +639,7 @@ export default function InventoryPage() {
                         <Button
                           variant="ghost"
                           size="icon-xs"
-                          aria-label="Delete link"
+                          aria-label={`Unlink ${itemName(recipe)}`}
                           onClick={() => deleteRecipe(recipe.id)}
                         >
                           <Trash2 />

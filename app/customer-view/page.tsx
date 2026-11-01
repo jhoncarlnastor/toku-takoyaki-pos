@@ -347,6 +347,14 @@ export default function CustomerViewPage() {
   const [realtimeOn, setRealtimeOn] = useState(false)
   const [cartData, setCartData] = useState<any | null>(null)
 
+  // Force reset all customer view state to idle/welcome screen
+  const clearDisplay = useCallback(() => {
+    setOrder(null)
+    setLines([])
+    setCartData(null)
+    setLiveAt(new Date())
+  }, [])
+
   // Listen to BroadcastChannel from POS
   useEffect(() => {
     const customerChannel = new BroadcastChannel('toku_customer_display')
@@ -355,12 +363,57 @@ export default function CustomerViewPage() {
         if (event.data.cart && event.data.cart.length > 0) {
           setCartData(event.data)
         } else {
-          setCartData(null)
+          clearDisplay()
         }
+      } else if (event.data.type === 'CLEAR_CUSTOMER_VIEW') {
+        clearDisplay()
       }
     }
     return () => customerChannel.close()
-  }, [])
+  }, [clearDisplay])
+
+  // Listen to localStorage for cross-tab synchronization (fallback)
+  useEffect(() => {
+    // Initialize from localStorage on mount
+    const stored = localStorage.getItem('toku_pos_cart')
+    if (stored) {
+      try {
+        const data = JSON.parse(stored)
+        if (data && data.cart && data.cart.length > 0) {
+          setCartData(data)
+        } else {
+          clearDisplay()
+        }
+      } catch {}
+    }
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'toku_pos_cart') {
+        if (e.newValue) {
+          try {
+            const data = JSON.parse(e.newValue)
+            if (data && data.cart && data.cart.length > 0) {
+              setCartData(data)
+            } else {
+              clearDisplay()
+            }
+          } catch {}
+        } else {
+          // localStorage item was removed (cleared)
+          clearDisplay()
+        }
+      }
+      // NEW: Listen for explicit customer view clear signal
+      if (e.key === 'toku_customer_view_cleared') {
+        if (e.newValue) {
+          clearDisplay()
+        }
+      }
+    }
+
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [clearDisplay])
 
   const load = useCallback(async () => {
     const { data, error } = await supabase
@@ -410,6 +463,9 @@ export default function CustomerViewPage() {
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => {
         load()
+      })
+      .on('broadcast', { event: 'CLEAR_CUSTOMER_VIEW' }, () => {
+        clearDisplay()
       })
       .subscribe((status) => {
         setRealtimeOn(status === 'SUBSCRIBED')
@@ -517,9 +573,9 @@ export default function CustomerViewPage() {
           <span className="text-3xl font-extrabold text-rose-500 tabular-nums mt-2">₱{activeTotal.toFixed(2)}</span>
         </div>
 
-        {/* Cash Tendered */}
+        {/* Cash Received */}
         <div className="rounded-2xl border border-white/5 bg-[#1a1c23] p-5 flex flex-col justify-between shadow-md">
-          <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Cash Tendered</span>
+          <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Cash Received</span>
           <span className="text-2xl font-bold text-zinc-300 tabular-nums mt-2">₱{cashTendered.toFixed(2)}</span>
         </div>
 

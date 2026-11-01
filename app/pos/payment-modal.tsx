@@ -13,6 +13,7 @@ interface PaymentModalProps {
   onCancel: () => void;
   onComplete: (info: { method: PaymentMethod; received: number; change: number }) => void;
   onCashChange?: (received: number, change: number) => void;
+  isSubmitting?: boolean;
 }
 
 const METHODS: { id: PaymentMethod; icon: typeof Banknote; hint: string }[] = [
@@ -30,6 +31,7 @@ export default function PaymentModal({
   onCancel,
   onComplete,
   onCashChange,
+  isSubmitting = false,
 }: PaymentModalProps) {
   const [method, setMethod] = useState<PaymentMethod>("Cash");
   const [cash, setCash] = useState("");
@@ -211,7 +213,7 @@ export default function PaymentModal({
             Cancel
           </button>
           <button
-            disabled={!canComplete}
+            disabled={!canComplete || isSubmitting}
             onClick={() =>
               onComplete({
                 method,
@@ -222,7 +224,7 @@ export default function PaymentModal({
             className="flex min-h-[56px] items-center justify-center gap-2 rounded-2xl bg-[#f97316] text-base font-bold text-white shadow-lg shadow-[#f97316]/20 transition hover:bg-[#ea6a0c] active:scale-95 disabled:cursor-not-allowed disabled:bg-[#2a2d3d] disabled:text-[#64748b] disabled:shadow-none"
           >
             <Check className="h-5 w-5" />
-            Complete Order
+            {isSubmitting ? "Processing..." : "Complete Order"}
           </button>
         </div>
       </div>

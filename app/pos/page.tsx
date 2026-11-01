@@ -28,6 +28,7 @@ import {
   type SelectedAddOn,
 } from "./menu-data";
 import PaymentModal, { type PaymentMethod } from "./payment-modal";
+import ThermalReceiptModal from "./components/ThermalReceiptModal";
 import { supabase } from "@/lib/supabase";
 
 type Tab = "All" | Category;
@@ -49,30 +50,63 @@ type ProductRecipe = {
 };
 
 async function deductRawMaterials(lines: CartLine[]) {
+  if (!lines || lines.length === 0) {
+    console.log("deductRawMaterials: No lines to process");
+    return;
+  }
   try {
-    const productIds = lines.map((l) => l.item.id);
+    const productIds = lines.map((l) => l.item.id).filter(Boolean);
+    const addOnIds = lines.flatMap(line => (line.addOns || []).map(a => a.id)).filter(Boolean);
+    
+    console.log("deductRawMaterials: Processing", { productIds, addOnIds, totalLines: lines.length });
+
+    // Build query conditions only for non-empty arrays
+    const conditions: string[] = [];
+    if (productIds.length > 0) {
+      conditions.push(`product_id.in.(${productIds.join(',')})`);
+    }
+    if (addOnIds.length > 0) {
+      conditions.push(`add_on_id.in.(${addOnIds.join(',')})`);
+    }
+
+    if (conditions.length === 0) {
+      console.log("deductRawMaterials: No product or add-on IDs to process");
+      return;
+    }
+
     const { data: recipes, error } = await supabase
       .from("product_recipes")
-      .select("product_id, inventory_item_id, quantity_required")
-      .in("product_id", productIds);
+      .select("product_id, add_on_id, inventory_item_id, quantity_required")
+      .or(conditions.join(','));
 
     if (error) {
-      console.log("No recipes available, skipping inventory deduction:", error.message);
+      console.error("deductRawMaterials: Supabase query error:", error);
       return;
     }
     if (!recipes || recipes.length === 0) {
-      console.log("No recipe linked for ordered products, skipping inventory deduction.");
+      console.log("deductRawMaterials: No recipes found for items");
       return;
     }
 
+    console.log(`deductRawMaterials: Found ${recipes.length} recipe(s)`);
+
     const qtyByProduct = new Map<string, number>();
+    const qtyByAddOn = new Map<string, number>();
+    
     for (const line of lines) {
       qtyByProduct.set(line.item.id, (qtyByProduct.get(line.item.id) ?? 0) + line.qty);
+      for (const addOn of (line.addOns || [])) {
+        qtyByAddOn.set(addOn.id, (qtyByAddOn.get(addOn.id) ?? 0) + line.qty);
+      }
     }
+    
     const deductions = new Map<string, number>();
 
-    for (const recipe of recipes as ProductRecipe[]) {
-      const orderedQty = qtyByProduct.get(recipe.product_id) ?? 0;
+    for (const recipe of recipes as any[]) {
+      const itemId = recipe.product_id || recipe.add_on_id;
+      if (!itemId) continue;
+      
+      const orderedQty = (recipe.product_id ? qtyByProduct.get(itemId) : qtyByAddOn.get(itemId)) ?? 0;
       const amount = recipe.quantity_required * orderedQty;
       if (amount <= 0) continue;
       deductions.set(
@@ -80,6 +114,8 @@ async function deductRawMaterials(lines: CartLine[]) {
         (deductions.get(recipe.inventory_item_id) ?? 0) + amount
       );
     }
+
+    console.log(`deductRawMaterials: Calculated deductions for ${deductions.size} ingredient(s)`);
 
     for (const [inventoryItemId, amount] of deductions) {
       const { data: item, error: fetchError } = await supabase
@@ -116,6 +152,7 @@ type AddOn = {
   id: string;
   name: string;
   price: number;
+  applicable_categories?: string[];
 };
 
 export default function PosPage() {
@@ -138,6 +175,19 @@ export default function PosPage() {
   const [customQty, setCustomQty] = useState(1);
   const [selectedAddOnIds, setSelectedAddOnIds] = useState<string[]>([]);
 
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [completedOrderData, setCompletedOrderData] = useState<{
+    orderNumber: number;
+    orderType: "Dine-in" | "Take-out";
+    cart: CartLine[];
+    total: number;
+    paymentMethod: "Cash" | "GCash" | "PayMaya";
+    cashReceived: number;
+    change: number;
+    customerInfo: string;
+    timestamp: Date;
+  } | null>(null);
+
   // Safe auth check on mount - clear stale sessions silently
   useEffect(() => {
     let mounted = true;
@@ -145,16 +195,20 @@ export default function PosPage() {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) {
-          console.log("Session check failed, clearing stale session");
+          console.warn("Session check failed, clearing stale session:", error.message);
           await supabase.auth.signOut();
           localStorage.removeItem("user_session");
           if (mounted) router.push("/login");
+          return;
         }
         // If no session but no error, user is simply not logged in
         // Middleware will handle redirect
+        if (!session) {
+          return;
+        }
       } catch (err) {
         // Fail silently - clear stale data and redirect
-        console.log("Auth check failed, clearing stale session");
+        console.warn("Auth check failed, clearing stale session:", err);
         try {
           await supabase.auth.signOut();
         } catch {}
@@ -168,20 +222,34 @@ export default function PosPage() {
 
   // Sync with customer display
   useEffect(() => {
-    const posChannel = new BroadcastChannel('toku_customer_display');
-    const subtotal = cart.reduce((acc, line) => acc + (line.item.price + (line.addOns || []).reduce((a, b) => a + b.price, 0)) * line.qty, 0);
-    const total = subtotal;
-    
-    posChannel.postMessage({
+    const cartData = {
       type: 'SYNC_CART',
       cart,
       orderType,
       orderNumber,
-      subtotal,
-      total
-    });
+      subtotal: cart.reduce((acc, line) => acc + (line.item.price + (line.addOns || []).reduce((a, b) => a + b.price, 0)) * line.qty, 0),
+    };
 
-    return () => posChannel.close();
+    // 1. Sync via BroadcastChannel (for same-tab or active tabs)
+    const posChannel = new BroadcastChannel('toku_customer_display');
+    if (cart.length === 0) {
+      posChannel.postMessage({ type: 'CLEAR_CUSTOMER_VIEW' });
+    } else {
+      posChannel.postMessage(cartData);
+    }
+    posChannel.close();
+
+    // 2. Sync via LocalStorage (for persisted state across tabs)
+    if (cart.length === 0) {
+      localStorage.removeItem('toku_pos_cart');
+    } else {
+      localStorage.setItem('toku_pos_cart', JSON.stringify(cartData));
+    }
+    
+    // Trigger storage event manually for same-tab updates
+    window.dispatchEvent(new Event('storage'));
+
+    return () => {};
   }, [cart, orderType, orderNumber]);
 
   useEffect(() => {
@@ -253,8 +321,13 @@ export default function PosPage() {
       console.error("Error fetching add-ons:", error);
       return;
     }
-    const rows = (data ?? []) as { id: string; name: string; price: number }[];
-    setAddOns(rows.map((a) => ({ id: a.id, name: a.name, price: Number(a.price) })));
+    const rows = (data ?? []) as { id: string; name: string; price: number; applicable_categories?: string[] }[];
+    setAddOns(rows.map((a) => ({ 
+      id: a.id, 
+      name: a.name, 
+      price: Number(a.price),
+      applicable_categories: a.applicable_categories ?? ["Takoyaki", "Drinks"]
+    })));
   }, []);
 
   useEffect(() => {
@@ -346,7 +419,18 @@ export default function PosPage() {
     );
   };
 
-  const customAddOns: SelectedAddOn[] = addOns.filter((a) => selectedAddOnIds.includes(a.id));
+  const categoryAddOns = useMemo(() => {
+    if (!customizeItem) return [];
+    const itemCategory = customizeItem.category || '';
+    return addOns.filter((addon) => {
+      if (!addon.applicable_categories || addon.applicable_categories.length === 0) return false;
+      return addon.applicable_categories.some(
+        (cat) => cat.trim().toLowerCase() === itemCategory.trim().toLowerCase()
+      );
+    });
+  }, [addOns, customizeItem]);
+
+  const customAddOns: SelectedAddOn[] = categoryAddOns.filter((a) => selectedAddOnIds.includes(a.id));
   const customUnitPrice = customizeItem
     ? customizeItem.price + customAddOns.reduce((s, a) => s + a.price, 0)
     : 0;
@@ -376,10 +460,26 @@ export default function PosPage() {
   const removeItem = (index: number) =>
     setCart((prev) => prev.filter((_, i) => i !== index));
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const fetchLatestOrderNum = async () => {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('order_number')
+        .order('order_number', { ascending: false })
+        .limit(1);
+      
+      if (!error && data && data.length > 0) {
+        setOrderNumber(data[0].order_number + 1);
+      }
+    };
+    fetchLatestOrderNum();
+  }, []);
+
   const completeOrder = async (info: { method: PaymentMethod; received: number; change: number }) => {
-    // Insert the order record into Supabase (matches orders table schema exactly)
+    setIsSubmitting(true);
     const orderPayload = {
-      order_number: orderNumber,
       order_type: orderType,
       subtotal: total,
       total_amount: total,
@@ -390,33 +490,26 @@ export default function PosPage() {
     };
 
     let orderId: string | null = null;
+    let finalOrderNumber: number = orderNumber;
     let orderError: { message: string } | null = null;
 
     try {
-      const { data: insertedOrder, error } = await supabase
+      const { data, error } = await supabase
         .from("orders")
         .insert([orderPayload])
-        .select();
+        .select("id, order_number");
 
       if (error) {
         orderError = error;
         console.error("SUPABASE INSERT ERROR:", error);
-        console.error("SUPABASE INSERT ERROR DETAILS:", {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-          payload: orderPayload,
-        });
-      } else {
-        orderId = insertedOrder?.[0]?.id ?? null;
+      } else if (data && data[0]) {
+        orderId = data[0].id;
+        finalOrderNumber = data[0].order_number;
       }
     } catch (err) {
       orderError = { message: err instanceof Error ? err.message : String(err) };
-      console.error("SUPABASE INSERT ERROR:", err);
     }
 
-    // Save order items referencing the order id
     if (orderId) {
       const baseRows = cart.map((line) => ({
         order_id: orderId,
@@ -426,10 +519,7 @@ export default function PosPage() {
         unit_price: line.item.price,
         total_price: lineUnitPrice(line) * line.qty,
       }));
-      const { error: itemsError } = await supabase.from("order_items").insert(baseRows);
-      if (itemsError) {
-        console.error("Error saving order items:", itemsError);
-      }
+      await supabase.from("order_items").insert(baseRows);
 
       const addOnRows = cart.flatMap((line) =>
         (line.addOns ?? []).map((addOn) => ({
@@ -442,27 +532,15 @@ export default function PosPage() {
         }))
       );
       if (addOnRows.length > 0) {
-        const { error: addOnError } = await supabase.from("order_items").insert(addOnRows);
-        if (addOnError) {
-          console.error("Error saving add-on items:", addOnError);
-        }
+        await supabase.from("order_items").insert(addOnRows);
       }
     }
 
-    // Deduct local menu stock
-    const qtyByProductId = new Map<string, number>();
-    for (const line of cart) {
-      qtyByProductId.set(line.item.id, (qtyByProductId.get(line.item.id) ?? 0) + line.qty);
-    }
-    setMenu((prev) =>
-      prev.map((m) => {
-        const qty = qtyByProductId.get(m.id);
-        return qty ? { ...m, stock: Math.max(0, m.stock - qty) } : m;
-      })
-    );
+    setMenu((prev) => prev.map((m) => {
+        const qty = cart.filter(l => l.item.id === m.id).reduce((s, l) => s + l.qty, 0);
+        return { ...m, stock: Math.max(0, m.stock - qty) };
+    }));
 
-    // Auto-deduct raw materials after a successful order insert —
-    // safe when no recipe is linked (never interrupts checkout)
     if (orderId) {
       try {
         await deductRawMaterials(cart);
@@ -472,35 +550,41 @@ export default function PosPage() {
     }
 
     if (!orderError) {
-      const changeMsg =
-        info.method === "Cash" && info.change > 0
-          ? ` Change due: ${peso(info.change)}.`
-          : "";
-      setToast(`Transaction Completed! Order #${orderNumber} (${info.method}).${changeMsg}`);
+      const changeMsg = info.method === "Cash" && info.change > 0 ? ` Change due: ${peso(info.change)}.` : "";
+      setToast(`Transaction Completed! Order #${finalOrderNumber} (${info.method}).${changeMsg}`);
       setTimeout(() => setToast(null), 4000);
+
+      // Store completed order data for receipt modal
+      setCompletedOrderData({
+        orderNumber: finalOrderNumber,
+        orderType,
+        cart: [...cart],
+        total,
+        paymentMethod: info.method,
+        cashReceived: info.received,
+        change: info.change,
+        customerInfo,
+        timestamp: new Date(),
+      });
+      setReceiptOpen(true);
     } else {
       setToast(`Order not saved: ${orderError.message}`);
       setTimeout(() => setToast(null), 6000);
     }
 
-    // Broadcast order completion
     const posChannel = new BroadcastChannel('toku_customer_display');
-    posChannel.postMessage({
-      type: 'SYNC_CART',
-      cart: [],
-      orderType,
-      orderNumber,
-      subtotal: 0,
-      total: 0,
-      cashTendered: info.received,
-      changeAmount: info.change
-    });
+    posChannel.postMessage({ type: 'CLEAR_CUSTOMER_VIEW' });
     posChannel.close();
+
+    localStorage.removeItem('toku_pos_cart');
+    localStorage.setItem('toku_customer_view_cleared', Date.now().toString());
+    window.dispatchEvent(new Event('storage'));
 
     setCart([]);
     setOrderType("Dine-in");
-    setOrderNumber((n) => n + 1);
+    setOrderNumber(finalOrderNumber + 1);
     setPayOpen(false);
+    setIsSubmitting(false);
   };
 
   return (
@@ -609,7 +693,7 @@ export default function PosPage() {
                       onClick={() => openCustomize(item)}
                       disabled={soldOut}
                       aria-label={`Customize ${item.name}`}
-                      className={`group relative flex flex-col justify-between h-full rounded-2xl border border-slate-200 dark:border-white/5 bg-white dark:bg-[#1a1c23] p-3.5 text-left transition-all duration-200 hover:border-rose-500/40 shadow-sm active:scale-[0.97] ${
+                      className={`group relative flex flex-col justify-between h-full rounded-2xl border border-slate-200/80 dark:border-zinc-800 bg-white dark:bg-[#1a1c23] p-3.5 text-left transition-all duration-200 hover:border-rose-500/40 shadow-sm active:scale-[0.97] ${
                         soldOut
                           ? "cursor-not-allowed opacity-50"
                           : inCart > 0
@@ -658,12 +742,15 @@ export default function PosPage() {
                       </div>
 
                       <div className="flex flex-1 flex-col justify-between">
-                        <p className="text-sm font-semibold text-zinc-100 line-clamp-1 mb-1">
+                        <p className="text-sm font-semibold text-slate-900 dark:text-zinc-100 line-clamp-1 mb-1">
                           {item.name}
                         </p>
-                        <p className="text-base font-bold text-rose-500">{peso(item.price)}</p>
+                        <p className="text-xs text-slate-500 dark:text-zinc-400 mb-1">
+                          {item.category}
+                        </p>
+                        <p className="text-base font-bold text-rose-600 dark:text-rose-400">{peso(item.price)}</p>
                         {maxed && !soldOut && (
-                          <p className="mt-1 text-[11px] text-amber-400">Max stock in order</p>
+                          <p className="mt-1 text-[11px] text-amber-500 dark:text-amber-400">Max stock in order</p>
                         )}
                       </div>
                     </button>
@@ -895,13 +982,13 @@ export default function PosPage() {
             {/* Section: Customize / Add-ons */}
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-zinc-500">
-                Customize / Add-ons
+                Customize / Add-ons ({customizeItem.category})
               </p>
-              {addOns.length === 0 ? (
-                <p className="text-sm text-slate-500 dark:text-zinc-500">No add-ons available yet.</p>
+              {categoryAddOns.length === 0 ? (
+                <p className="text-sm text-slate-500 dark:text-zinc-500">No applicable add-ons for this category.</p>
               ) : (
                 <ul className="space-y-2">
-                  {addOns.map((addOn) => {
+                  {categoryAddOns.map((addOn) => {
                     const checked = selectedAddOnIds.includes(addOn.id);
                     return (
                       <li key={addOn.id}>
@@ -950,6 +1037,7 @@ export default function PosPage() {
         open={payOpen}
         total={total}
         orderNumber={orderNumber}
+        isSubmitting={isSubmitting}
         onCancel={() => {
           setPayOpen(false);
         }}
@@ -979,6 +1067,26 @@ export default function PosPage() {
           <CheckCircle2 className="h-5 w-5 text-emerald-400" />
           {toast}
         </div>
+      )}
+
+      {completedOrderData && (
+        <ThermalReceiptModal
+          isOpen={receiptOpen}
+          onClose={() => {
+            setReceiptOpen(false);
+            setCompletedOrderData(null);
+          }}
+          onPrint={() => window.print()}
+          orderNumber={completedOrderData.orderNumber}
+          orderType={completedOrderData.orderType}
+          cart={completedOrderData.cart}
+          total={completedOrderData.total}
+          paymentMethod={completedOrderData.paymentMethod}
+          cashReceived={completedOrderData.cashReceived}
+          change={completedOrderData.change}
+          customerInfo={completedOrderData.customerInfo}
+          timestamp={completedOrderData.timestamp}
+        />
       )}
     </div>
   );
