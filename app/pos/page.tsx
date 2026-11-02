@@ -272,6 +272,17 @@ export default function PosPage() {
 
   const handleLogout = async () => {
     try {
+      const params = new URLSearchParams(window.location.search);
+      const deviceId = params.get("device") || "default";
+
+      const channel = supabase.channel(`customer_display_${deviceId}`);
+      channel.send({
+        type: 'broadcast',
+        event: 'clear_cart',
+        payload: {}
+      });
+      supabase.removeChannel(channel);
+
       await supabase.auth.signOut();
       await fetch("/api/auth/logout", { method: "POST" });
       localStorage.removeItem("user_session");
@@ -582,7 +593,7 @@ export default function PosPage() {
     const clearChannel = supabase.channel(`customer_display_${deviceId}`);
     clearChannel.send({
       type: 'broadcast',
-      event: 'CLEAR_CUSTOMER_VIEW',
+      event: 'clear_cart',
       payload: {}
     });
     supabase.removeChannel(clearChannel);

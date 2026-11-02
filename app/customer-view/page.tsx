@@ -353,12 +353,26 @@ export default function CustomerViewPage() {
     setLines([])
     setCartData(null)
     setLiveAt(new Date())
+    
+    // Clear storage for current device
+    const params = new URLSearchParams(window.location.search);
+    const deviceId = params.get("device");
+    if (deviceId) {
+      localStorage.removeItem(`toku_pos_cart_${deviceId}`);
+    }
   }, [])
 
   // Listen to Supabase Broadcast for device-specific updates
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const deviceId = params.get("device") || "default";
+    const deviceId = params.get("device");
+
+    // REQUIRE DEVICE PARAMETER WARNING
+    if (!deviceId) {
+      // Clear data if no device specified to prevent showing unrelated orders
+      clearDisplay();
+      return;
+    }
 
     const channel = supabase.channel(`customer_display_${deviceId}`);
     
@@ -371,7 +385,7 @@ export default function CustomerViewPage() {
           clearDisplay();
         }
       })
-      .on('broadcast', { event: 'CLEAR_CUSTOMER_VIEW' }, () => {
+      .on('broadcast', { event: 'clear_cart' }, () => {
         clearDisplay();
       })
       .subscribe();
