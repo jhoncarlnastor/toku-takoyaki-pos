@@ -355,65 +355,76 @@ export default function CustomerViewPage() {
     setLiveAt(new Date())
   }, [])
 
-  // Listen to BroadcastChannel from POS
+  // Listen to Supabase Broadcast for device-specific updates
   useEffect(() => {
-    const customerChannel = new BroadcastChannel('toku_customer_display')
-    customerChannel.onmessage = (event) => {
-      if (event.data.type === 'SYNC_CART') {
-        if (event.data.cart && event.data.cart.length > 0) {
-          setCartData(event.data)
+    const params = new URLSearchParams(window.location.search);
+    const deviceId = params.get("device") || "default";
+
+    const channel = supabase.channel(`customer_display_${deviceId}`);
+    
+    channel
+      .on('broadcast', { event: 'SYNC_CART' }, (event) => {
+        const data = event.payload;
+        if (data && data.cart && data.cart.length > 0) {
+          setCartData(data);
         } else {
-          clearDisplay()
+          clearDisplay();
         }
-      } else if (event.data.type === 'CLEAR_CUSTOMER_VIEW') {
-        clearDisplay()
-      }
-    }
-    return () => customerChannel.close()
-  }, [clearDisplay])
+      })
+      .on('broadcast', { event: 'CLEAR_CUSTOMER_VIEW' }, () => {
+        clearDisplay();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [clearDisplay]);
 
   // Listen to localStorage for cross-tab synchronization (fallback)
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const deviceId = params.get("device") || "default";
+
     // Initialize from localStorage on mount
-    const stored = localStorage.getItem('toku_pos_cart')
+    const stored = localStorage.getItem(`toku_pos_cart_${deviceId}`);
     if (stored) {
       try {
-        const data = JSON.parse(stored)
+        const data = JSON.parse(stored);
         if (data && data.cart && data.cart.length > 0) {
-          setCartData(data)
+          setCartData(data);
         } else {
-          clearDisplay()
+          clearDisplay();
         }
       } catch {}
     }
 
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'toku_pos_cart') {
+      if (e.key === `toku_pos_cart_${deviceId}`) {
         if (e.newValue) {
           try {
-            const data = JSON.parse(e.newValue)
+            const data = JSON.parse(e.newValue);
             if (data && data.cart && data.cart.length > 0) {
-              setCartData(data)
+              setCartData(data);
             } else {
-              clearDisplay()
+              clearDisplay();
             }
           } catch {}
         } else {
-          // localStorage item was removed (cleared)
-          clearDisplay()
+          clearDisplay();
         }
       }
-      // NEW: Listen for explicit customer view clear signal
+      
       if (e.key === 'toku_customer_view_cleared') {
         if (e.newValue) {
-          clearDisplay()
+          clearDisplay();
         }
       }
-    }
+    };
 
-    window.addEventListener('storage', handleStorage)
-    return () => window.removeEventListener('storage', handleStorage)
-  }, [clearDisplay])
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [clearDisplay]);
 
   const load = useCallback(async () => {
     const { data, error } = await supabase

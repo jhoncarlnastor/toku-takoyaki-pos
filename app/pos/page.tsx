@@ -222,6 +222,9 @@ export default function PosPage() {
 
   // Sync with customer display
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const deviceId = params.get("device") || "default";
+
     const cartData = {
       type: 'SYNC_CART',
       cart,
@@ -230,26 +233,35 @@ export default function PosPage() {
       subtotal: cart.reduce((acc, line) => acc + (line.item.price + (line.addOns || []).reduce((a, b) => a + b.price, 0)) * line.qty, 0),
     };
 
-    // 1. Sync via BroadcastChannel (for same-tab or active tabs)
-    const posChannel = new BroadcastChannel('toku_customer_display');
+    // 1. Sync via Supabase Broadcast (isolated by deviceId)
+    const channel = supabase.channel(`customer_display_${deviceId}`);
+    
     if (cart.length === 0) {
-      posChannel.postMessage({ type: 'CLEAR_CUSTOMER_VIEW' });
+      channel.send({
+        type: 'broadcast',
+        event: 'CLEAR_CUSTOMER_VIEW',
+        payload: {}
+      });
     } else {
-      posChannel.postMessage(cartData);
+      channel.send({
+        type: 'broadcast',
+        event: 'SYNC_CART',
+        payload: cartData
+      });
     }
-    posChannel.close();
 
-    // 2. Sync via LocalStorage (for persisted state across tabs)
+    // 2. Fallback: LocalStorage (scoped by deviceId)
     if (cart.length === 0) {
-      localStorage.removeItem('toku_pos_cart');
+      localStorage.removeItem(`toku_pos_cart_${deviceId}`);
     } else {
-      localStorage.setItem('toku_pos_cart', JSON.stringify(cartData));
+      localStorage.setItem(`toku_pos_cart_${deviceId}`, JSON.stringify(cartData));
     }
     
-    // Trigger storage event manually for same-tab updates
     window.dispatchEvent(new Event('storage'));
 
-    return () => {};
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [cart, orderType, orderNumber]);
 
   useEffect(() => {
@@ -564,11 +576,18 @@ export default function PosPage() {
       setTimeout(() => setToast(null), 6000);
     }
 
-    const posChannel = new BroadcastChannel('toku_customer_display');
-    posChannel.postMessage({ type: 'CLEAR_CUSTOMER_VIEW' });
-    posChannel.close();
+    const params = new URLSearchParams(window.location.search);
+    const deviceId = params.get("device") || "default";
 
-    localStorage.removeItem('toku_pos_cart');
+    const clearChannel = supabase.channel(`customer_display_${deviceId}`);
+    clearChannel.send({
+      type: 'broadcast',
+      event: 'CLEAR_CUSTOMER_VIEW',
+      payload: {}
+    });
+    supabase.removeChannel(clearChannel);
+
+    localStorage.removeItem(`toku_pos_cart_${deviceId}`);
     localStorage.setItem('toku_customer_view_cleared', Date.now().toString());
     window.dispatchEvent(new Event('storage'));
 
@@ -1015,18 +1034,25 @@ export default function PosPage() {
         }}
         onComplete={completeOrder}
         onCashChange={(received, change) => {
-          const posChannel = new BroadcastChannel('toku_customer_display');
-          posChannel.postMessage({
-            type: 'SYNC_CART',
-            cart,
-            orderType,
-            orderNumber,
-            subtotal: total,
-            total,
-            cashTendered: received,
-            changeDue: change
+          const params = new URLSearchParams(window.location.search);
+          const deviceId = params.get("device") || "default";
+
+          const payChannel = supabase.channel(`customer_display_${deviceId}`);
+          payChannel.send({
+            type: 'broadcast',
+            event: 'SYNC_CART',
+            payload: {
+              type: 'SYNC_CART',
+              cart,
+              orderType,
+              orderNumber,
+              subtotal: total,
+              total,
+              cashTendered: received,
+              changeDue: change
+            }
           });
-          posChannel.close();
+          supabase.removeChannel(payChannel);
         }}
       />
 
