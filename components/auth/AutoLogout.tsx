@@ -10,28 +10,53 @@ export default function AutoLogout() {
   const router = useRouter();
   const pathname = usePathname();
 
-  const handleLogout = useCallback(async () => {
+  const handleLogout = useCallback(async (reason: string = "Session expired due to inactivity.") => {
     try {
       await supabase.auth.signOut();
       await fetch("/api/auth/logout", { method: "POST" });
       localStorage.removeItem("user_session");
-      alert("Session expired due to inactivity.");
+      sessionStorage.removeItem("app_authenticated");
+      if (reason) alert(reason);
       router.push("/login");
+      router.refresh();
     } catch (err) {
       console.error("Logout failed:", err);
       router.push("/login");
+      router.refresh();
     }
   }, [router]);
 
+  // 1. Force logout on fresh browser / tab session if sessionStorage flag is missing
   useEffect(() => {
-    // Only apply on protected routes (admin or pos)
+    if (pathname === "/login") return;
+
+    const isAuthed = sessionStorage.getItem("app_authenticated");
+    if (!isAuthed) {
+      handleLogout("Fresh session detected. Please log in.");
+    }
+  }, [pathname, handleLogout]);
+
+  // 2. Browser close cleanup: beforeunload listener to clear sessionStorage or cookies
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Optional: clear auth flag on tab/browser close if desired
+      // sessionStorage.removeItem("app_authenticated");
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, []);
+
+  // 3. Inactivity timer
+  useEffect(() => {
     if (pathname === "/login") return;
 
     let timer: NodeJS.Timeout;
 
     const resetTimer = () => {
       clearTimeout(timer);
-      timer = setTimeout(handleLogout, TIMEOUT);
+      timer = setTimeout(() => handleLogout("Session expired due to inactivity."), TIMEOUT);
     };
 
     const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];

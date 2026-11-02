@@ -95,6 +95,7 @@ export function LoginCard() {
     }
 
     // 3. Role-based redirect
+    sessionStorage.setItem("app_authenticated", "true");
     const destination = staff.role === 'Admin' ? '/admin' : '/pos'
     setRole(staff.role === 'Admin' ? 'admin' : 'staff')
     setStatus('success')
