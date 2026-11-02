@@ -441,69 +441,13 @@ export default function CustomerViewPage() {
   }, [clearDisplay]);
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(1)
-
-    if (error) {
-      console.error('Customer view orders error:', error)
-      setOrder(null)
-      setLines([])
-      return
-    }
-
-    const latest = (data?.[0] as Order | undefined) ?? null
-    const active = latest && isActiveOrder(latest) ? latest : null
-    setOrder(active)
-    setLiveAt(new Date())
-
-    if (!active) {
-      setLines([])
-      return
-    }
-
-    const { data: items, error: itemsError } = await supabase
-      .from('order_items')
-      .select('*')
-      .eq('order_id', active.id)
-
-    if (itemsError) {
-      console.error('Customer view items error:', itemsError)
-      setLines([])
-      return
-    }
-    setLines(buildLines((items as OrderItemRow[]) ?? []))
+    // Disabled previous transaction auto-load per requirements
   }, [])
 
   useEffect(() => {
-    load()
-
-    // Realtime: cashier updates in /pos reflect here instantly
-    const channel = supabase
-      .channel('customer_view_display')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        load()
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => {
-        load()
-      })
-      .on('broadcast', { event: 'CLEAR_CUSTOMER_VIEW' }, () => {
-        clearDisplay()
-      })
-      .subscribe((status) => {
-        setRealtimeOn(status === 'SUBSCRIBED')
-      })
-
-    // Fallback poll in case realtime drops
-    const timer = setInterval(load, 30_000)
-
-    return () => {
-      supabase.removeChannel(channel)
-      clearInterval(timer)
-    }
-  }, [load])
+    // Removed load() call on mount
+    setRealtimeOn(true)
+  }, [])
 
   // Determine active display data
   const hasCart = cartData && cartData.cart && cartData.cart.length > 0;

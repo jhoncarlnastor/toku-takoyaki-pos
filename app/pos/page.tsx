@@ -10,6 +10,7 @@ import {
   CupSoda,
   LogOut,
   Minus,
+  Monitor,
   Moon,
   Plus,
   Search,
@@ -234,21 +235,24 @@ export default function PosPage() {
     };
 
     // 1. Sync via Supabase Broadcast (isolated by deviceId)
-    const channel = supabase.channel(`customer_display_${deviceId}`);
-    
-    if (cart.length === 0) {
-      channel.send({
-        type: 'broadcast',
-        event: 'CLEAR_CUSTOMER_VIEW',
-        payload: {}
-      });
-    } else {
-      channel.send({
-        type: 'broadcast',
-        event: 'SYNC_CART',
-        payload: cartData
-      });
-    }
+    const channel = supabase.channel(`customer_display_${deviceId}`, { config: { broadcast: { self: true } } });
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        if (cart.length === 0) {
+          channel.send({
+            type: 'broadcast',
+            event: 'CLEAR_CUSTOMER_VIEW',
+            payload: {}
+          });
+        } else {
+          channel.send({
+            type: 'broadcast',
+            event: 'SYNC_CART',
+            payload: cartData
+          });
+        }
+      }
+    });
 
     // 2. Fallback: LocalStorage (scoped by deviceId)
     if (cart.length === 0) {
@@ -590,13 +594,17 @@ export default function PosPage() {
     const params = new URLSearchParams(window.location.search);
     const deviceId = params.get("device") || "default";
 
-    const clearChannel = supabase.channel(`customer_display_${deviceId}`);
-    clearChannel.send({
-      type: 'broadcast',
-      event: 'clear_cart',
-      payload: {}
+    const clearChannel = supabase.channel(`customer_display_${deviceId}`, { config: { broadcast: { self: true } } });
+    clearChannel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        clearChannel.send({
+          type: 'broadcast',
+          event: 'clear_cart',
+          payload: {}
+        });
+        setTimeout(() => supabase.removeChannel(clearChannel), 500);
+      }
     });
-    supabase.removeChannel(clearChannel);
 
     localStorage.removeItem(`toku_pos_cart_${deviceId}`);
     localStorage.setItem('toku_customer_view_cleared', Date.now().toString());
@@ -622,6 +630,17 @@ export default function PosPage() {
                 <h1 className="text-xl font-bold leading-tight text-slate-900 dark:text-zinc-100 tracking-tight">Toku Takoyaki</h1>
                 <p className="text-sm text-slate-500 dark:text-zinc-500">Staff POS</p>
               </div>
+              <button
+                onClick={() => {
+                  const params = new URLSearchParams(window.location.search);
+                  const deviceId = params.get("device") || "default";
+                  window.open(`/customer-view?device=${deviceId}`, '_blank');
+                }}
+                className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 ml-4"
+              >
+                <Monitor className="size-4" />
+                Customer View
+              </button>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
@@ -1048,22 +1067,26 @@ export default function PosPage() {
           const params = new URLSearchParams(window.location.search);
           const deviceId = params.get("device") || "default";
 
-          const payChannel = supabase.channel(`customer_display_${deviceId}`);
-          payChannel.send({
-            type: 'broadcast',
-            event: 'SYNC_CART',
-            payload: {
-              type: 'SYNC_CART',
-              cart,
-              orderType,
-              orderNumber,
-              subtotal: total,
-              total,
-              cashTendered: received,
-              changeDue: change
+          const payChannel = supabase.channel(`customer_display_${deviceId}`, { config: { broadcast: { self: true } } });
+          payChannel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+              payChannel.send({
+                type: 'broadcast',
+                event: 'SYNC_CART',
+                payload: {
+                  type: 'SYNC_CART',
+                  cart,
+                  orderType,
+                  orderNumber,
+                  subtotal: total,
+                  total,
+                  cashTendered: received,
+                  changeDue: change
+                }
+              });
+              setTimeout(() => supabase.removeChannel(payChannel), 500);
             }
           });
-          supabase.removeChannel(payChannel);
         }}
       />
 
