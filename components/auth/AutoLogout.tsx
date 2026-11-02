@@ -28,7 +28,8 @@ export default function AutoLogout() {
 
   // 1. Force logout on fresh browser / tab session if sessionStorage flag is missing
   useEffect(() => {
-    if (pathname === "/login") return;
+    // Exclude public routes (/login, /customer-view)
+    if (pathname === "/login" || pathname.startsWith("/customer-view")) return;
 
     const isAuthed = sessionStorage.getItem("app_authenticated");
     if (!isAuthed) {
@@ -36,12 +37,9 @@ export default function AutoLogout() {
     }
   }, [pathname, handleLogout]);
 
-  // 2. Browser close cleanup: beforeunload listener to clear sessionStorage or cookies
+  // 2. Browser close cleanup
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      // Optional: clear auth flag on tab/browser close if desired
-      // sessionStorage.removeItem("app_authenticated");
-    };
+    const handleBeforeUnload = () => {};
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => {
       window.removeEventListener("beforeunload", handleBeforeUnload);
@@ -50,7 +48,8 @@ export default function AutoLogout() {
 
   // 3. Inactivity timer
   useEffect(() => {
-    if (pathname === "/login") return;
+    // Exclude public routes (/login, /customer-view)
+    if (pathname === "/login" || pathname.startsWith("/customer-view")) return;
 
     let timer: NodeJS.Timeout;
 
