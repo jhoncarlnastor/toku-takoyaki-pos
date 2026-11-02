@@ -278,11 +278,36 @@ export default function MenuPage() {
   async function handleDeleteProduct(product: Product) {
     if (!window.confirm(`Delete "${product.name}"?`)) return
 
+    // 1. Delete related product_recipes first to avoid foreign key conflict
+    const { error: recipeError } = await supabase
+      .from('product_recipes')
+      .delete()
+      .eq('product_id', product.id)
+
+    if (recipeError) {
+      console.error('Error deleting related product recipes:', recipeError)
+      setError(recipeError.message)
+      return
+    }
+
+    // 2. Clear product_id references in order_items if foreign key exists, or perform soft delete / hard delete
+    const { error: orderItemsError } = await supabase
+      .from('order_items')
+      .update({ product_id: null })
+      .eq('product_id', product.id)
+
+    if (orderItemsError) {
+      console.warn('Note on order_items update (may be optional):', orderItemsError.message)
+    }
+
+    // 3. Delete the product itself
     const { error } = await supabase.from('products').delete().eq('id', product.id)
     if (error) {
       console.error('Error deleting product:', error)
       setError(error.message)
     } else {
+      // 4. Immediately update local state without hard refresh
+      setProducts((prev) => prev.filter((p) => p.id !== product.id))
       fetchProducts()
     }
   }

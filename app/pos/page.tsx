@@ -382,13 +382,10 @@ export default function PosPage() {
   const lineSignature = (l: CartLine) =>
     `${l.item.id}|${(l.addOns ?? []).map((a) => a.id).sort().join(",")}`;
 
+  // Products are always available and active in POS menu
   const pushLine = (line: CartLine) => {
     if (line.qty <= 0) return;
     setCart((prev) => {
-      const totalForItem = prev
-        .filter((l) => l.item.id === line.item.id)
-        .reduce((s, l) => s + l.qty, 0);
-      if (totalForItem + line.qty > line.item.stock) return prev;
       const signature = lineSignature(line);
       const existing = prev.find((l) => lineSignature(l) === signature);
       if (existing) {
@@ -401,7 +398,6 @@ export default function PosPage() {
   };
 
   const openCustomize = (item: MenuItem) => {
-    if (item.stock <= 0) return;
     setCustomizeItem(item);
     setCustomQty(1);
     setSelectedAddOnIds([]);
@@ -438,7 +434,7 @@ export default function PosPage() {
 
   const confirmCustomize = () => {
     if (!customizeItem) return;
-    const qty = Math.min(customQty, customizeItem.stock);
+    const qty = customQty;
     pushLine({ item: customizeItem, qty, addOns: customAddOns });
     closeCustomize();
   };
@@ -447,11 +443,7 @@ export default function PosPage() {
     setCart((prev) => {
       const line = prev[index];
       if (!line) return prev;
-      const otherQty = prev
-        .filter((l, i) => i !== index && l.item.id === line.item.id)
-        .reduce((s, l) => s + l.qty, 0);
-      const maxForLine = Math.max(0, line.item.stock - otherQty);
-      const nextQty = Math.min(maxForLine, line.qty + delta);
+      const nextQty = line.qty + delta;
       if (nextQty <= 0) return prev.filter((_, i) => i !== index);
       return prev.map((l, i) => (i === index ? { ...l, qty: nextQty } : l));
     });
@@ -691,12 +683,9 @@ export default function PosPage() {
                     <button
                       key={item.id}
                       onClick={() => openCustomize(item)}
-                      disabled={soldOut}
                       aria-label={`Customize ${item.name}`}
                       className={`group relative flex flex-col justify-between h-full rounded-2xl border border-slate-200/80 dark:border-zinc-800 bg-white dark:bg-[#1a1c23] p-3.5 text-left transition-all duration-200 hover:border-rose-500/40 shadow-sm active:scale-[0.97] ${
-                        soldOut
-                          ? "cursor-not-allowed opacity-50"
-                          : inCart > 0
+                        inCart > 0
                           ? "border-rose-600 ring-1 ring-rose-600/40"
                           : ""
                       }`}
@@ -721,18 +710,7 @@ export default function PosPage() {
                           </div>
                         )}
 
-                        {/* Stock badge: only show Low Stock or Out of Stock */}
-                        {item.stock <= 10 && (
-                          <span
-                            className={`absolute left-2 top-2 rounded-full border px-2 py-0.5 text-[10px] font-semibold shadow-sm ${
-                              item.stock <= 0
-                                ? "bg-red-500/25 text-red-300 border-red-500/40"
-                                : "bg-amber-500/25 text-amber-300 border-amber-500/40"
-                            }`}
-                          >
-                            {item.stock <= 0 ? "Out of Stock" : "Low Stock"}
-                          </span>
-                        )}
+                        {/* Stock badges removed from POS menu */}
 
                         {inCart > 0 && (
                           <span className="absolute right-2 top-2 flex h-6 min-w-6 items-center justify-center rounded-full bg-rose-600 px-1.5 text-xs font-bold text-white shadow-md">
@@ -749,9 +727,6 @@ export default function PosPage() {
                           {item.category}
                         </p>
                         <p className="text-base font-bold text-rose-600 dark:text-rose-400">{peso(item.price)}</p>
-                        {maxed && !soldOut && (
-                          <p className="mt-1 text-[11px] text-amber-500 dark:text-amber-400">Max stock in order</p>
-                        )}
                       </div>
                     </button>
                   );
@@ -865,9 +840,8 @@ export default function PosPage() {
                         </span>
                         <button
                           onClick={() => changeQty(index, 1)}
-                          disabled={qtyInCart(line.item.id) >= line.item.stock}
                           aria-label={`Increase ${line.item.name}`}
-                          className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-900 dark:text-zinc-100 transition hover:bg-slate-200 dark:hover:bg-white/5 active:scale-90 disabled:opacity-30"
+                          className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-900 dark:text-zinc-100 transition hover:bg-slate-200 dark:hover:bg-white/5 active:scale-90"
                         >
                           <Plus className="h-4 w-4" />
                         </button>
@@ -961,10 +935,9 @@ export default function PosPage() {
                 </button>
                 <span className="w-8 text-center text-base font-bold tabular-nums text-slate-900 dark:text-zinc-100">{customQty}</span>
                 <button
-                  onClick={() => setCustomQty((q) => Math.min(customizeItem.stock, q + 1))}
-                  disabled={customQty >= customizeItem.stock}
+                  onClick={() => setCustomQty((q) => q + 1)}
                   aria-label="Increase quantity"
-                  className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-900 dark:text-zinc-100 transition hover:bg-slate-200 dark:hover:bg-white/5 active:scale-90 disabled:opacity-30"
+                  className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-900 dark:text-zinc-100 transition hover:bg-slate-200 dark:hover:bg-white/5 active:scale-90"
                 >
                   <Plus className="h-4 w-4" />
                 </button>
@@ -1023,7 +996,6 @@ export default function PosPage() {
             <div className="border-t border-slate-200 dark:border-white/5 p-4">
               <button
                 onClick={confirmCustomize}
-                disabled={customizeItem.stock <= 0}
                 className="min-h-[64px] w-full rounded-2xl bg-rose-600 text-lg font-bold text-white shadow-md shadow-rose-900/30 transition-all duration-200 hover:bg-rose-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-zinc-500 disabled:shadow-none"
               >
                 Add to Order - {peso(customTotal)}

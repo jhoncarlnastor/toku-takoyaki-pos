@@ -299,12 +299,44 @@ export default function InventoryPage() {
   }
 
   async function deleteRecipe(recipeId: string) {
+    if (!window.confirm('Are you sure you want to remove this recipe link?')) return
     const { error: deleteError } = await supabase.from('product_recipes').delete().eq('id', recipeId)
     if (deleteError) {
       console.error('Error deleting recipe link:', deleteError)
       setError(deleteError.message)
     } else {
-      fetchRecipes()
+      setRecipes((prev) => prev.filter((r) => r.id !== recipeId))
+      refreshAll()
+    }
+  }
+  async function deleteRawMaterial(item: InventoryItem) {
+    if (!window.confirm(`Are you sure you want to delete raw material "${item.name}"?`)) return
+
+    // 1. Delete linked product_recipes rows associated with this ingredient first
+    const { error: recipeError } = await supabase
+      .from('product_recipes')
+      .delete()
+      .eq('inventory_item_id', item.id)
+
+    if (recipeError) {
+      console.error('Error deleting related recipes for raw material:', recipeError)
+      setError(recipeError.message)
+      return
+    }
+
+    // 2. Delete the raw material from inventory_items
+    const { error } = await supabase
+      .from('inventory_items')
+      .delete()
+      .eq('id', item.id)
+
+    if (error) {
+      console.error('Error deleting raw material:', error)
+      setError(error.message)
+    } else {
+      // Immediately update local state without hard refresh
+      setItems((prev) => prev.filter((i) => i.id !== item.id))
+      refreshAll()
     }
   }
 
@@ -412,6 +444,15 @@ export default function InventoryPage() {
                           >
                             <PackagePlus />
                             Restock
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => deleteRawMaterial(item)}
+                            className="text-destructive hover:bg-destructive/10"
+                            aria-label={`Delete ${item.name}`}
+                          >
+                            <Trash2 className="size-4" />
                           </Button>
                         </div>
                       </td>
