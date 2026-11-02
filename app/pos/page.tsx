@@ -52,15 +52,12 @@ type ProductRecipe = {
 
 async function deductRawMaterials(lines: CartLine[]) {
   if (!lines || lines.length === 0) {
-    console.log("deductRawMaterials: No lines to process");
     return;
   }
   try {
     const productIds = lines.map((l) => l.item.id).filter(Boolean);
     const addOnIds = lines.flatMap(line => (line.addOns || []).map(a => a.id)).filter(Boolean);
     
-    console.log("deductRawMaterials: Processing", { productIds, addOnIds, totalLines: lines.length });
-
     // Build query conditions only for non-empty arrays
     const conditions: string[] = [];
     if (productIds.length > 0) {
@@ -71,7 +68,6 @@ async function deductRawMaterials(lines: CartLine[]) {
     }
 
     if (conditions.length === 0) {
-      console.log("deductRawMaterials: No product or add-on IDs to process");
       return;
     }
 
@@ -85,11 +81,8 @@ async function deductRawMaterials(lines: CartLine[]) {
       return;
     }
     if (!recipes || recipes.length === 0) {
-      console.log("deductRawMaterials: No recipes found for items");
       return;
     }
-
-    console.log(`deductRawMaterials: Found ${recipes.length} recipe(s)`);
 
     const qtyByProduct = new Map<string, number>();
     const qtyByAddOn = new Map<string, number>();
@@ -116,8 +109,6 @@ async function deductRawMaterials(lines: CartLine[]) {
       );
     }
 
-    console.log(`deductRawMaterials: Calculated deductions for ${deductions.size} ingredient(s)`);
-
     for (const [inventoryItemId, amount] of deductions) {
       const { data: item, error: fetchError } = await supabase
         .from("inventory_items")
@@ -126,7 +117,6 @@ async function deductRawMaterials(lines: CartLine[]) {
         .maybeSingle();
 
       if (fetchError || !item) {
-        console.error("Error fetching inventory item:", fetchError);
         continue;
       }
 
@@ -138,10 +128,6 @@ async function deductRawMaterials(lines: CartLine[]) {
 
       if (updateError) {
         console.error("Error deducting inventory:", updateError);
-      } else {
-        console.log(
-          `Inventory deducted: ingredient ${inventoryItemId} -${amount} (${item.current_stock} -> ${newStock})`
-        );
       }
     }
   } catch (err) {
