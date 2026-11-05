@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
   CheckCircle2,
+  ChefHat,
   Cookie,
   CupSoda,
   LogOut,
@@ -30,6 +31,7 @@ import {
 } from "./menu-data";
 import PaymentModal, { type PaymentMethod } from "./payment-modal";
 import ThermalReceiptModal from "./components/ThermalReceiptModal";
+
 import { supabase } from "@/lib/supabase";
 
 type Tab = "All" | Category;
@@ -163,6 +165,7 @@ export default function PosPage() {
   const [selectedAddOnIds, setSelectedAddOnIds] = useState<string[]>([]);
 
   const [receiptOpen, setReceiptOpen] = useState(false);
+
   const [completedOrderData, setCompletedOrderData] = useState<{
     orderNumber: number;
     orderType: "Dine-in" | "Take-out";
@@ -491,7 +494,7 @@ export default function PosPage() {
       payment_method: info.method,
       cash_received: info.received,
       change_due: info.change,
-      status: "Completed",
+      status: "Preparing",
     };
 
     let orderId: string | null = null;
@@ -516,6 +519,9 @@ export default function PosPage() {
     }
 
     if (orderId) {
+      // Insert main items with standard fields only.
+      // order_items has NO add_ons column — sending it causes 400 schema cache
+      // errors in the DevTools console, so it is never included.
       const baseRows = cart.map((line) => ({
         order_id: orderId,
         product_id: line.item.id,
@@ -524,8 +530,11 @@ export default function PosPage() {
         unit_price: line.item.price,
         total_price: lineUnitPrice(line) * line.qty,
       }));
-      await supabase.from("order_items").insert(baseRows);
 
+      const { error: baseErr } = await supabase.from("order_items").insert(baseRows);
+      if (baseErr) console.error("ORDER ITEMS INSERT ERROR:", baseErr.message);
+
+      // Insert add-ons as separate rows (kitchen display groups them per product)
       const addOnRows = cart.flatMap((line) =>
         (line.addOns ?? []).map((addOn) => ({
           order_id: orderId,
@@ -537,7 +546,8 @@ export default function PosPage() {
         }))
       );
       if (addOnRows.length > 0) {
-        await supabase.from("order_items").insert(addOnRows);
+        const { error: addonErr } = await supabase.from("order_items").insert(addOnRows);
+        if (addonErr) console.error("ADD-ON ROWS INSERT ERROR:", addonErr);
       }
     }
 
@@ -616,17 +626,23 @@ export default function PosPage() {
                 <h1 className="text-xl font-bold leading-tight text-slate-900 dark:text-zinc-100 tracking-tight">Toku Takoyaki</h1>
                 <p className="text-sm text-slate-500 dark:text-zinc-500">Staff POS</p>
               </div>
-              <button
-                onClick={() => {
-                  const params = new URLSearchParams(window.location.search);
-                  const deviceId = params.get("device") || "default";
-                  window.open(`/customer-view?device=${deviceId}`, '_blank');
-                }}
-                className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 ml-4"
-              >
-                <Monitor className="size-4" />
-                Customer View
-              </button>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => window.open('/customer-view', '_blank')}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors"
+                >
+                  <Monitor className="w-4 h-4" />
+                  Customer View
+                </button>
+                
+                <button 
+                  onClick={() => window.open('/kitchen', '_blank')}
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors"
+                >
+                  <UtensilsCrossed className="w-4 h-4" />
+                  Kitchen View
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">

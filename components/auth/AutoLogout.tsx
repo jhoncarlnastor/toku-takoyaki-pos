@@ -28,8 +28,8 @@ export default function AutoLogout() {
 
   // 1. Force logout on fresh browser / tab session if sessionStorage flag is missing
   useEffect(() => {
-    // Exclude public routes (/login, /customer-view)
-    if (pathname === "/login" || pathname.startsWith("/customer-view")) return;
+    // Exclude public routes (/login, /customer-view, /kitchen display)
+    if (pathname === "/login" || pathname.startsWith("/customer-view") || pathname === "/kitchen" || pathname.startsWith("/kitchen/")) return;
 
     const isAuthed = sessionStorage.getItem("app_authenticated");
     if (!isAuthed) {
@@ -46,10 +46,11 @@ export default function AutoLogout() {
     };
   }, []);
 
-  // 3. Inactivity timer
+  // 3. Inactivity timer — skipped entirely on /kitchen so the display screen
+  //    stays open permanently, matching /customer-view behavior
   useEffect(() => {
-    // Exclude public routes (/login, /customer-view)
-    if (pathname === "/login" || pathname.startsWith("/customer-view")) return;
+    // Exclude public routes (/login, /customer-view, /kitchen display)
+    if (pathname === "/login" || pathname.startsWith("/customer-view") || pathname === "/kitchen" || pathname.startsWith("/kitchen/")) return;
 
     let timer: NodeJS.Timeout;
 

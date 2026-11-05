@@ -10,32 +10,31 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { formatHour, type HourlySale } from '@/lib/admin-data'
+import { type TrendPoint } from '@/lib/admin-data'
 import { formatPeso } from '@/lib/currency'
-
-function formatClock(hour: number) {
-  const h = ((hour % 24) + 24) % 24
-  const suffix = h >= 12 ? 'PM' : 'AM'
-  const display = h % 12 === 0 ? 12 : h % 12
-  return `${display}:00 ${suffix}`
-}
 
 type SalesTooltipProps = {
   active?: boolean
-  payload?: Array<{ payload: HourlySale }>
+  payload?: Array<{ payload: TrendPoint }>
 }
 
 function SalesTooltip({ active, payload }: SalesTooltipProps) {
   if (!active || !payload || payload.length === 0) return null
-  const { hour, revenue } = payload[0].payload
+  const { label, revenue } = payload[0].payload
   return (
     <div className="rounded-lg border border-[#2a2d3d] bg-[#121318] px-3 py-2 text-xs font-semibold text-white shadow-xl">
-      {formatClock(hour)} | Sales: {formatPeso(revenue)}
+      {label} | Sales: {formatPeso(revenue)}
     </div>
   )
 }
 
-export function SalesTrendChart({ data }: { data: HourlySale[] }) {
+export function SalesTrendChart({
+  data,
+  caption,
+}: {
+  data: TrendPoint[]
+  caption?: string
+}) {
   const max = Math.max(0, ...data.map((d) => d.revenue))
   const hasData = max > 0
 
@@ -45,7 +44,7 @@ export function SalesTrendChart({ data }: { data: HourlySale[] }) {
         <h2 id="sales-trend-heading" className="text-sm font-semibold">
           Sales Trend
         </h2>
-        <span className="text-xs text-muted-foreground">2-hour blocks, today</span>
+        <span className="text-xs text-muted-foreground">{caption ?? 'Sales trend'}</span>
       </div>
 
       <div className="relative h-52">
@@ -61,12 +60,12 @@ export function SalesTrendChart({ data }: { data: HourlySale[] }) {
             <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" vertical={false} />
 
             <XAxis
-              dataKey="hour"
-              tickFormatter={(hour: number) => formatHour(hour)}
+              dataKey="label"
               tick={{ fill: '#64748b', fontSize: 10 }}
               axisLine={{ stroke: '#1e293b' }}
               tickLine={false}
-              interval={0}
+              interval={data.length > 10 ? 'preserveStartEnd' : 0}
+              minTickGap={8}
             />
             <YAxis
               width={56}
@@ -79,7 +78,7 @@ export function SalesTrendChart({ data }: { data: HourlySale[] }) {
 
             <Tooltip
               content={<SalesTooltip />}
-              cursor={{ stroke: '#e11d48', strokeWidth: 1, strokeDasharray: '4 4' }}
+              cursor={{ stroke: '#e11d48', strokeWidth: 2, strokeDasharray: '4 4' }}
             />
 
             <Area
@@ -104,7 +103,7 @@ export function SalesTrendChart({ data }: { data: HourlySale[] }) {
 
         {!hasData && (
           <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
-            No sales recorded yet today
+            No sales recorded for this period
           </p>
         )}
       </div>

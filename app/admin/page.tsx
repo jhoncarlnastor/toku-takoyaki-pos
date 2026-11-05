@@ -1,22 +1,34 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Banknote, CheckCircle2, Star } from 'lucide-react'
+import { Banknote, CheckCircle2, Download, Star } from 'lucide-react'
 import { MetricCard } from '@/components/admin/metric-card'
 import { PageHeader } from '@/components/admin/page-header'
 import { SalesTrendChart } from '@/components/admin/sales-trend-chart'
 import { TopMenuItems } from '@/components/admin/top-menu-items'
-import { EMPTY_DASHBOARD, getDashboardData, type DashboardData } from '@/lib/admin-data'
+import { Button } from '@/components/ui/button'
+import {
+  DATE_RANGE_OPTIONS,
+  EMPTY_DASHBOARD,
+  dateRangeLabel,
+  getDashboardData,
+  getSalesReportRows,
+  salesReportToCsv,
+  type DashboardData,
+  type DateRangeKey,
+} from '@/lib/admin-data'
 import { formatPeso } from '@/lib/currency'
 import { supabase } from '@/lib/supabase'
 
 export default function DashboardOverviewPage() {
   const [data, setData] = useState<DashboardData>(EMPTY_DASHBOARD)
+  const [dateRange, setDateRange] = useState<DateRangeKey>('today')
+  const [exporting, setExporting] = useState(false)
 
   const fetchDashboardData = useCallback(async () => {
-    const next = await getDashboardData()
+    const next = await getDashboardData(dateRange)
     setData(next)
-  }, [])
+  }, [dateRange])
 
   useEffect(() => {
     fetchDashboardData()
@@ -51,13 +63,78 @@ export default function DashboardOverviewPage() {
     }
   }, [fetchDashboardData])
 
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const rows = await getSalesReportRows(dateRange)
+      const csv = salesReportToCsv(rows)
+      // BOM so Excel detects UTF-8 correctly
+      const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = 'sales-report.csv'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Failed to export sales report:', error)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const rangeLabel = dateRangeLabel(dateRange)
+
   return (
     <>
-      <PageHeader title="Dashboard Overview" description="Today's performance at a glance." />
+      <PageHeader
+        title="Dashboard Overview"
+        description={`${rangeLabel} performance at a glance.`}
+        actions={
+          <>
+            <label className="sr-only" htmlFor="dashboard-date-range">
+              Date range
+            </label>
+            <select
+              id="dashboard-date-range"
+              value={dateRange}
+              onChange={(event) => setDateRange(event.target.value as DateRangeKey)}
+              className="h-8 rounded-lg border border-border bg-background px-2.5 text-sm font-medium text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              {DATE_RANGE_OPTIONS.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              onClick={handleExport}
+              disabled={exporting}
+              aria-label="Export Sales Report"
+            >
+              <Download />
+              {exporting ? 'Exporting…' : 'Export Sales Report'}
+            </Button>
+          </>
+        }
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <MetricCard label="Total Revenue Today" value={formatPeso(data.revenueToday)} icon={Banknote} comparison="+14.2% from yesterday" />
-        <MetricCard label="Orders Completed" value={data.ordersCompleted.toLocaleString('en-PH')} icon={CheckCircle2} comparison="+3 orders vs avg" />
+        <MetricCard
+          label={`Total Revenue · ${rangeLabel}`}
+          value={formatPeso(data.revenue)}
+          icon={Banknote}
+          comparison={rangeLabel}
+        />
+        <MetricCard
+          label="Orders Completed"
+          value={data.ordersCompleted.toLocaleString('en-PH')}
+          icon={CheckCircle2}
+          comparison={rangeLabel}
+        />
         <MetricCard
           label="Signature Item"
           value={data.signatureItem ?? '—'}
@@ -68,7 +145,7 @@ export default function DashboardOverviewPage() {
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <SalesTrendChart data={data.hourlySales} />
+          <SalesTrendChart data={data.salesTrend} caption={data.trendCaption} />
         </div>
         <TopMenuItems items={data.topItems} />
       </div>
